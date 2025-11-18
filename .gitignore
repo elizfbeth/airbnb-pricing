@@ -25,7 +25,7 @@ env/
 # Data files (large files)
 data/raw/*.csv.gz
 data/raw/*.csv
-data/processed/*.csv
+# data/processed/*.csv - Now tracked with Git LFS
 
 # Models (large files)
 models/*.joblib

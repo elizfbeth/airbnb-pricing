@@ -9,6 +9,55 @@ import joblib
 from pathlib import Path
 import sys
 import os
+import subprocess
+
+# Download Git LFS files if needed (for Streamlit Cloud deployment)
+def ensure_lfs_files():
+    """Ensure Git LFS files are downloaded."""
+    project_root = Path(__file__).resolve().parent.parent
+    
+    # Check if we need to download LFS files
+    # LFS pointer files are small (<200 bytes) and start with "version https://git-lfs"
+    lfs_files = [
+        project_root / "data" / "processed" / "processed.csv",
+        project_root / "data" / "processed" / "X_test.csv",
+        project_root / "data" / "processed" / "y_test.csv",
+        project_root / "models" / "rf_pipeline.joblib"
+    ]
+    
+    needs_download = False
+    for file_path in lfs_files:
+        if file_path.exists():
+            # Check if it's an LFS pointer (small file starting with "version")
+            try:
+                with open(file_path, 'rb') as f:
+                    first_bytes = f.read(50)
+                    if b'version https://git-lfs' in first_bytes:
+                        needs_download = True
+                        break
+            except:
+                pass
+    
+    if needs_download:
+        try:
+            # Run git lfs pull to download actual files
+            result = subprocess.run(
+                ['git', 'lfs', 'pull'],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+            if result.returncode == 0:
+                st.cache_data.clear()  # Clear cache after downloading
+        except Exception as e:
+            # If git lfs pull fails, continue anyway (might not be needed)
+            pass
+
+# Run LFS download check (only once per session)
+if 'lfs_checked' not in st.session_state:
+    ensure_lfs_files()
+    st.session_state.lfs_checked = True
 
 # Add parent directory to path (so we can import from src)
 # Use resolve() to get absolute path
@@ -64,7 +113,14 @@ def load_data():
     data_path = project_root / "data" / "processed" / "processed.csv"
     if not data_path.exists():
         return None
-    return pd.read_csv(data_path)
+    # Check if file is too small (might be LFS pointer that wasn't downloaded)
+    if data_path.stat().st_size < 1000:  # LFS pointers are <200 bytes
+        return None
+    try:
+        return pd.read_csv(data_path)
+    except Exception as e:
+        # File might be corrupted or still downloading
+        return None
 
 # Home page
 if page == "Home":
@@ -163,59 +219,68 @@ elif page == "Model Performance":
         y_test_path = project_root / "data" / "processed" / "y_test.csv"
 
         if X_test_path.exists() and y_test_path.exists():
-            # Load test data
-            X_test = pd.read_csv(X_test_path)
-            y_test = pd.read_csv(y_test_path).squeeze()
-
-            # Make predictions
-            y_pred = model.predict(X_test)
-
-            # Calculate metrics
-            from sklearn.metrics import mean_absolute_error, r2_score
-            try:
-                from sklearn.metrics import root_mean_squared_error
-                rmse = root_mean_squared_error(y_test, y_pred)
-            except ImportError:
-                from sklearn.metrics import mean_squared_error
-                rmse = mean_squared_error(y_test, y_pred, squared=False)
-
-            mae = mean_absolute_error(y_test, y_pred)
-            r2 = r2_score(y_test, y_pred)
-
-            # Display in columns
-            col1, col2, col3 = st.columns(3)
-            col1.metric("RMSE", f"${rmse:.2f}", help="Root Mean Squared Error - Average prediction error")
-            col2.metric("MAE", f"${mae:.2f}", help="Mean Absolute Error - Median prediction error")
-            col3.metric("R² Score", f"{r2:.3f}", help="Coefficient of determination - 1.0 is perfect")
-
-            # Additional metrics
-            st.markdown("---")
-            st.markdown("### Detailed Metrics")
-
-            pct_error = np.abs((y_pred - y_test) / y_test) * 100
-            median_pct_error = np.median(pct_error)
-            mean_pct_error = np.mean(pct_error)
-
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Median % Error", f"{median_pct_error:.2f}%")
-            col2.metric("Mean % Error", f"{mean_pct_error:.2f}%")
-            col3.metric("Test Samples", f"{len(y_test):,}")
-
-            # Interpretation
-            st.markdown("---")
-            st.markdown("### Interpretation")
-            if r2 > 0.9:
-                st.success(f" **Excellent Performance!** Your model explains {r2*100:.1f}% of the variance in prices.")
-            elif r2 > 0.7:
-                st.info(f" **Good Performance!** Your model explains {r2*100:.1f}% of the variance in prices.")
+            # Check if files are LFS pointers (too small)
+            if X_test_path.stat().st_size < 1000 or y_test_path.stat().st_size < 1000:
+                st.warning("⚠️ Data files appear to be Git LFS pointers. Please ensure Git LFS files are downloaded.")
+                st.info("If deploying on Streamlit Cloud, make sure `git-lfs` is in `packages.txt` and files are committed.")
             else:
-                st.warning(f" **Moderate Performance.** Your model explains {r2*100:.1f}% of the variance in prices.")
+                try:
+                    # Load test data
+                    X_test = pd.read_csv(X_test_path)
+                    y_test = pd.read_csv(y_test_path).squeeze()
 
-            st.markdown(f"""
-            - **RMSE of ${rmse:.2f}** means predictions are typically within ±${rmse:.0f} of actual prices
-            - **Median error of {median_pct_error:.2f}%** means half of predictions are nearly perfect
-            - **Tested on {len(y_test):,} listings** from NYC
-            """)
+                    # Make predictions
+                    y_pred = model.predict(X_test)
+
+                    # Calculate metrics
+                    from sklearn.metrics import mean_absolute_error, r2_score
+                    try:
+                        from sklearn.metrics import root_mean_squared_error
+                        rmse = root_mean_squared_error(y_test, y_pred)
+                    except ImportError:
+                        from sklearn.metrics import mean_squared_error
+                        rmse = mean_squared_error(y_test, y_pred, squared=False)
+
+                    mae = mean_absolute_error(y_test, y_pred)
+                    r2 = r2_score(y_test, y_pred)
+
+                    # Display in columns
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("RMSE", f"${rmse:.2f}", help="Root Mean Squared Error - Average prediction error")
+                    col2.metric("MAE", f"${mae:.2f}", help="Mean Absolute Error - Median prediction error")
+                    col3.metric("R² Score", f"{r2:.3f}", help="Coefficient of determination - 1.0 is perfect")
+
+                    # Additional metrics
+                    st.markdown("---")
+                    st.markdown("### Detailed Metrics")
+
+                    pct_error = np.abs((y_pred - y_test) / y_test) * 100
+                    median_pct_error = np.median(pct_error)
+                    mean_pct_error = np.mean(pct_error)
+
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Median % Error", f"{median_pct_error:.2f}%")
+                    col2.metric("Mean % Error", f"{mean_pct_error:.2f}%")
+                    col3.metric("Test Samples", f"{len(y_test):,}")
+
+                    # Interpretation
+                    st.markdown("---")
+                    st.markdown("### Interpretation")
+                    if r2 > 0.9:
+                        st.success(f" **Excellent Performance!** Your model explains {r2*100:.1f}% of the variance in prices.")
+                    elif r2 > 0.7:
+                        st.info(f" **Good Performance!** Your model explains {r2*100:.1f}% of the variance in prices.")
+                    else:
+                        st.warning(f" **Moderate Performance.** Your model explains {r2*100:.1f}% of the variance in prices.")
+
+                    st.markdown(f"""
+                    - **RMSE of ${rmse:.2f}** means predictions are typically within ±${rmse:.0f} of actual prices
+                    - **Median error of {median_pct_error:.2f}%** means half of predictions are nearly perfect
+                    - **Tested on {len(y_test):,} listings** from NYC
+                    """)
+                except Exception as e:
+                    st.error(f"Error loading or processing test data: {str(e)}")
+                    st.info("If files are Git LFS pointers, ensure they are downloaded.")
         else:
             st.markdown("""
             | Metric | Value |

@@ -6,6 +6,8 @@ Machine learning model for predicting optimal nightly prices for Airbnb listings
 
 This project implements an end-to-end machine learning pipeline that predicts Airbnb listing prices with 97.2% accuracy (R² score). The system includes data processing, model training, evaluation, and deployment via both a web dashboard and REST API.
 
+https://airbnb-pricing-etutc5pereohmu5bbtxdeo.streamlit.app/#evaluation-metrics
+
 ## Key Features
 
 - **High Accuracy**: 97.2% R² score on test set
